@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+  body { font-family: Helvetica, Arial, sans-serif; font-weight: bold; text-align: center; }
+  #wrap { margin: 0 auto; width: 100em; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 0; vertical-align: middle; }
+
+  #top { height: 9em; }
+  #day { font-size: 6em; text-align: left; padding-left: 0.7em; }
+  #place { font-size: 4em; text-align: right; padding-right: 1em; font-weight: normal; }
+
+  #now { height: 40em; }
+  #temp { font-size: 27em; line-height: 1; letter-spacing: -0.04em; }
+  #temp.long { font-size: 21em; }
+
+  #word { font-size: 11em; line-height: 1.2; }
+
+  #hint { margin: 1.5em 5em 0 5em; border: 0.8em solid #000; border-radius: 3em; padding: 1.6em 1em; }
+  #wear { font-size: 6.4em; line-height: 1.2; }
+  #extra { font-size: 5.2em; line-height: 1.3; font-weight: normal; }
+
+  #range { margin-top: 2.2em; }
+  #range td { font-size: 5.6em; width: 50%; }
+  #range span { font-weight: normal; }
+
+  #later { margin-top: 2.2em; border-top: 0.5em solid #000; padding-top: 1.2em; }
+  #later td { width: 33%; }
+  .dname { font-size: 5em; }
+  .dtemp { font-size: 5em; }
+  .dtemp span { font-weight: normal; color: #444; }
+
+  #foot { font-size: 3em; font-weight: normal; margin-top: 0.6em; color: #333; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <table id="top"><tr>
+    <td><div id="day">Today</div></td>
+    <td><div id="place"></div></td>
+  </tr></table>
+
+  <table id="now"><tr>
+    <td style="width:45%"><canvas id="icon"></canvas></td>
+    <td style="width:55%"><div id="temp">--</div></td>
+  </tr></table>
+
+  <div id="word">Loading&hellip;</div>
+
+  <div id="hint">
+    <div id="wear">Getting the weather</div>
+    <div id="extra"></div>
+  </div>
+
+  <table id="range"><tr>
+    <td><span>Warmest</span> <b id="hi">--</b></td>
+    <td><span>Coldest</span> <b id="lo">--</b></td>
+  </tr></table>
+
+  <div id="later">
+    <table><tr>
+      <td><div class="dname" id="n1"></div><canvas id="i1"></canvas><div class="dtemp" id="t1"></div></td>
+      <td><div class="dname" id="n2"></div><canvas id="i2"></canvas><div class="dtemp" id="t2"></div></td>
+      <td><div class="dname" id="n3"></div><canvas id="i3"></canvas><div class="dtemp" id="t3"></div></td>
+    </tr></table>
+  </div>
+
+  <div id="foot"></div>
+</div>
+
+<script>
+/* ---------- SETTINGS: change these for a different place ---------- */
+var PLACE = "San Jose";
+var LAT = 37.34;
+var LON = -121.89;
+var REFRESH_MINUTES = 30;
+/* ------------------------------------------------------------------ */
+
+/* Written in old-style JavaScript on purpose so the Kindle browser can run it. */
+
+var DEG = "°";
+var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+var unit = 8;
+var lastData = null;
+
+function el(id) { return document.getElementById(id); }
+function setText(id, s) {
+  var e = el(id);
+  while (e.firstChild) { e.removeChild(e.firstChild); }
+  e.appendChild(document.createTextNode(s));
+}
+
+function layout() {
+  var w = window.innerWidth || document.documentElement.clientWidth || 600;
+  var h = window.innerHeight || document.documentElement.clientHeight || 800;
+  unit = Math.min(w / 100, h / 132);
+  if (unit < 3) { unit = 3; }
+  el("wrap").style.fontSize = unit + "px";
+}
+
+/* ---------- weather code -> picture and word ---------- */
+function kindOf(code, isDay) {
+  if (code === 0 || code === 1) { return isDay ? "sun" : "moon"; }
+  if (code === 2) { return isDay ? "partsun" : "partmoon"; }
+  if (code === 3) { return "cloud"; }
+  if (code === 45 || code === 48) { return "fog"; }
+  if (code >= 51 && code <= 57) { return "drizzle"; }
+  if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) { return "rain"; }
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) { return "snow"; }
+  if (code >= 95) { return "storm"; }
+  return "cloud";
+}
+var WORDS = {
+  sun: "Sunny", moon: "Clear night", partsun: "A few clouds", partmoon: "A few clouds",
+  cloud: "Cloudy", fog: "Foggy", drizzle: "Drizzly", rain: "Rainy", snow: "Snowy", storm: "Stormy"
+};
+
+/* ---------- pictures, drawn on a 100 x 100 grid ---------- */
+function cloudShape(c, cx, cy, s, e) {
+  c.beginPath(); c.arc(cx - 18 * s, cy + 6 * s, 14 * s + e, 0, Math.PI * 2, false); c.fill();
+  c.beginPath(); c.arc(cx, cy - 6 * s, 20 * s + e, 0, Math.PI * 2, false); c.fill();
+  c.beginPath(); c.arc(cx + 20 * s, cy + 4 * s, 16 * s + e, 0, Math.PI * 2, false); c.fill();
+  c.fillRect(cx - 18 * s, cy + 2 * s, 38 * s, 18 * s + e);
+}
+function cloud(c, cx, cy, s) {
+  c.fillStyle = "#000"; cloudShape(c, cx, cy, s, 2.5);
+  c.fillStyle = "#fff"; cloudShape(c, cx, cy, s, -2.5);
+}
+function sun(c, cx, cy, r) {
+  var i, a;
+  c.strokeStyle = "#000"; c.lineWidth = 5; c.lineCap = "round";
+  for (i = 0; i < 8; i++) {
+    a = i * Math.PI / 4;
+    c.beginPath();
+    c.moveTo(cx + Math.cos(a) * r * 1.45, cy + Math.sin(a) * r * 1.45);
+    c.lineTo(cx + Math.cos(a) * r * 1.95, cy + Math.sin(a) * r * 1.95);
+    c.stroke();
+  }
+  c.fillStyle = "#000"; c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2, false); c.fill();
+  c.fillStyle = "#fff"; c.beginPath(); c.arc(cx, cy, r - 5, 0, Math.PI * 2, false); c.fill();
+}
+function moon(c, cx, cy, r) {
+  c.fillStyle = "#000"; c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2, false); c.fill();
+  c.fillStyle = "#fff"; c.beginPath(); c.arc(cx + r * 0.45, cy - r * 0.3, r * 0.85, 0, Math.PI * 2, false); c.fill();
+}
+function drops(c, xs, y, len) {
+  var i;
+  c.strokeStyle = "#000"; c.lineWidth = 5; c.lineCap = "round";
+  for (i = 0; i < xs.length; i++) {
+    c.beginPath(); c.moveTo(xs[i], y); c.lineTo(xs[i] - len * 0.4, y + len); c.stroke();
+  }
+}
+function flakes(c, pts) {
+  var i;
+  c.fillStyle = "#000";
+  for (i = 0; i < pts.length; i++) {
+    c.beginPath(); c.arc(pts[i][0], pts[i][1], 4, 0, Math.PI * 2, false); c.fill();
+  }
+}
+function drawIcon(id, kind, px) {
+  var cv = el(id), c, k, i, ys;
+  px = Math.round(px);
+  cv.width = px; cv.height = px;
+  cv.style.width = px + "px"; cv.style.height = px + "px";
+  if (!cv.getContext) { return; }
+  c = cv.getContext("2d");
+  k = px / 100;
+  c.setTransform(k, 0, 0, k, 0, 0);
+  c.clearRect(0, 0, 100, 100);
+
+  if (kind === "sun") { sun(c, 50, 50, 23); }
+  else if (kind === "moon") { moon(c, 46, 50, 32); }
+  else if (kind === "partsun") { sun(c, 66, 34, 16); cloud(c, 44, 58, 1); }
+  else if (kind === "partmoon") { moon(c, 68, 30, 20); cloud(c, 44, 58, 1); }
+  else if (kind === "cloud") { cloud(c, 49, 50, 1.2); }
+  else if (kind === "drizzle") { cloud(c, 49, 38, 1.1); drops(c, [36, 62], 70, 12); }
+  else if (kind === "rain") { cloud(c, 49, 36, 1.1); drops(c, [28, 44, 60, 76], 68, 20); }
+  else if (kind === "snow") { cloud(c, 49, 36, 1.1); flakes(c, [[28, 72], [46, 72], [64, 72], [37, 88], [55, 88], [73, 88]]); }
+  else if (kind === "storm") {
+    cloud(c, 49, 34, 1.1);
+    c.fillStyle = "#000"; c.beginPath();
+    c.moveTo(54, 60); c.lineTo(36, 82); c.lineTo(48, 82); c.lineTo(42, 99);
+    c.lineTo(64, 74); c.lineTo(52, 74); c.lineTo(60, 60); c.closePath(); c.fill();
+  }
+  else if (kind === "fog") {
+    ys = [30, 46, 62, 78];
+    c.strokeStyle = "#000"; c.lineWidth = 7; c.lineCap = "round";
+    for (i = 0; i < ys.length; i++) {
+      c.beginPath(); c.moveTo(i % 2 ? 24 : 14, ys[i]); c.lineTo(i % 2 ? 86 : 76, ys[i]); c.stroke();
+    }
+  }
+}
+
+/* ---------- what to wear ---------- */
+function wearFor(feels) {
+  if (feels < 40) { return "Coat, hat and gloves!"; }
+  if (feels < 55) { return "Wear a warm jacket"; }
+  if (feels < 68) { return "Wear a sweater"; }
+  if (feels < 85) { return "T-shirt weather"; }
+  return "Very hot! Drink water";
+}
+function extraFor(kind, rainChance, dayKind) {
+  if (kind === "storm" || dayKind === "storm") { return "Thunderstorm: stay inside"; }
+  if (kind === "snow" || dayKind === "snow") { return "Snow! Wear boots"; }
+  if (kind === "rain" || kind === "drizzle" || dayKind === "rain" || rainChance >= 50) { return "Bring an umbrella"; }
+  if (rainChance >= 30) { return "It might rain later"; }
+  return "No rain today";
+}
+
+/* ---------- dates and times (taken from the forecast, not the Kindle clock) ---------- */
+function dayName(ymd) {
+  var p = ymd.split("-");
+  return DAYS[new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay()];
+}
+function clock(iso) {
+  var t = iso.split("T")[1].split(":"), h = +t[0], ap = h >= 12 ? "PM" : "AM";
+  h = h % 12; if (h === 0) { h = 12; }
+  return h + ":" + t[1] + " " + ap;
+}
+
+/* ---------- put everything on the page ---------- */
+function show(d) {
+  var cur = d.current, day = d.daily, i, k, t;
+  var kind = kindOf(cur.weather_code, cur.is_day === 1);
+  var todayKind = kindOf(day.weather_code[0], true);
+  var chance = day.precipitation_probability_max ? (day.precipitation_probability_max[0] || 0) : 0;
+
+  layout();
+  t = Math.round(cur.temperature_2m) + DEG;
+  el("temp").className = t.length > 3 ? "long" : "";
+  setText("temp", t);
+  setText("day", dayName(day.time[0]));
+  setText("place", PLACE);
+  setText("word", WORDS[kind]);
+  setText("wear", wearFor(cur.apparent_temperature));
+  setText("extra", extraFor(kind, chance, todayKind));
+  setText("hi", Math.round(day.temperature_2m_max[0]) + DEG);
+  setText("lo", Math.round(day.temperature_2m_min[0]) + DEG);
+  drawIcon("icon", kind, unit * 40);
+
+  for (i = 1; i <= 3; i++) {
+    k = kindOf(day.weather_code[i], true);
+    setText("n" + i, dayName(day.time[i]));
+    drawIcon("i" + i, k, unit * 17);
+    el("t" + i).innerHTML = Math.round(day.temperature_2m_max[i]) + DEG +
+      " <span>" + Math.round(day.temperature_2m_min[i]) + DEG + "</span>";
+  }
+  setText("foot", "Updated " + clock(cur.time));
+}
+
+/* ---------- get the forecast (free Open-Meteo service, no account needed) ---------- */
+var QUERY = "api.open-meteo.com/v1/forecast?latitude=" + LAT + "&longitude=" + LON +
+  "&current=temperature_2m,apparent_temperature,weather_code,is_day" +
+  "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+  "&temperature_unit=fahrenheit&timezone=auto&forecast_days=4";
+
+function get(url, ok, fail) {
+  var x, done = false;
+  function bad() { if (!done) { done = true; fail(); } }
+  try {
+    x = new XMLHttpRequest();
+    x.onreadystatechange = function () {
+      var data;
+      if (x.readyState !== 4 || done) { return; }
+      if (x.responseText) {
+        try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
+        if (data && data.current && data.daily) { done = true; ok(data); return; }
+      }
+      bad();
+    };
+    x.open("GET", url, true);
+    x.send(null);
+    setTimeout(bad, 45000);
+  } catch (e) { bad(); }
+}
+
+function again(minutes) { setTimeout(load, minutes * 60000); }
+
+function load() {
+  function ok(d) { lastData = d; show(d); again(REFRESH_MINUTES); }
+  function failed() {
+    if (lastData) {
+      setText("foot", "No internet. Showing weather from " + clock(lastData.current.time));
+    } else {
+      setText("word", "No internet");
+      setText("wear", "Check the Wi-Fi");
+      setText("extra", "Trying again soon");
+    }
+    again(5);
+  }
+  if (/demo/.test(window.location.search)) { ok(DEMO); return; }
+  get("https://" + QUERY, ok, function () { get("http://" + QUERY, ok, failed); });
+}
+
+var DEMO = {
+  current: { time: "2026-11-09T15:30", temperature_2m: 63.4, apparent_temperature: 61, weather_code: 2, is_day: 1 },
+  daily: {
+    time: ["2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12"],
+    weather_code: [2, 61, 3, 0],
+    temperature_2m_max: [66.2, 60.1, 62.7, 68.9],
+    temperature_2m_min: [47.8, 49.3, 45.1, 46.4],
+    precipitation_probability_max: [10, 80, 20, 0]
+  }
+};
+
+window.onresize = function () { if (lastData) { show(lastData); } else { layout(); } };
+layout();
+load();
+</script>
+</body>
+</html>
