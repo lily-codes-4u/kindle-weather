@@ -13,7 +13,7 @@
 
   #top { height: 9em; }
   #day { font-size: 6em; text-align: left; padding-left: 0.7em; }
-  #place { font-size: 4em; text-align: right; padding-right: 1em; font-weight: normal; }
+  #place { white-space: nowrap; font-size: 4em; text-align: right; padding-right: 1em; font-weight: normal; }
 
   #now { height: 40em; }
   #temp { font-size: 27em; line-height: 1; letter-spacing: -0.04em; }
@@ -75,10 +75,12 @@
 
 <script>
 /* ---------- SETTINGS: change these for a different place ---------- */
-var PLACE = "San Jose";
-var LAT = 37.34;
-var LON = -121.89;
+var HOME_NAME = "Inner Sunset";
+var HOME_LAT = 37.762;
+var HOME_LON = -122.466;
+var HOME_RADIUS_MILES = 60; /* closer to home than this: show the home weather */
 var REFRESH_MINUTES = 30;
+var PLACE = HOME_NAME;
 /* ------------------------------------------------------------------ */
 
 /* Written in old-style JavaScript on purpose so the Kindle browser can run it. */
@@ -96,7 +98,7 @@ function setText(id, s) {
 }
 
 function layout() {
-  var w = window.innerWidth || document.documentElement.clientWidth || 600;
+  var w = document.body.offsetWidth || document.documentElement.clientWidth || window.innerWidth || 600;
   var h = window.innerHeight || document.documentElement.clientHeight || 800;
   unit = Math.min(w / 100, h / 132);
   if (unit < 3) { unit = 3; }
@@ -254,12 +256,16 @@ function show(d) {
 }
 
 /* ---------- get the forecast (free Open-Meteo service, no account needed) ---------- */
-var QUERY = "api.open-meteo.com/v1/forecast?latitude=" + LAT + "&longitude=" + LON +
-  "&current=temperature_2m,apparent_temperature,weather_code,is_day" +
-  "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
-  "&temperature_unit=fahrenheit&timezone=auto&forecast_days=4";
+function weatherUrl(lat, lon) {
+  return "api.open-meteo.com/v1/forecast?latitude=" + lat.toFixed(2) + "&longitude=" + lon.toFixed(2) +
+    "&current=temperature_2m,apparent_temperature,weather_code,is_day" +
+    "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+    "&temperature_unit=fahrenheit&timezone=auto&forecast_days=4";
+}
+function isWeather(d) { return d.current && d.daily; }
+function isPlace(d) { return !isNaN(parseFloat(d.latitude)) && !isNaN(parseFloat(d.longitude)); }
 
-function get(url, ok, fail) {
+function get(url, valid, ok, fail) {
   var x, done = false;
   function bad() { if (!done) { done = true; fail(); } }
   try {
@@ -269,20 +275,38 @@ function get(url, ok, fail) {
       if (x.readyState !== 4 || done) { return; }
       if (x.responseText) {
         try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
-        if (data && data.current && data.daily) { done = true; ok(data); return; }
+        if (data && valid(data)) { done = true; ok(data); return; }
       }
       bad();
     };
     x.open("GET", url, true);
     x.send(null);
-    setTimeout(bad, 45000);
+    setTimeout(bad, 30000);
   } catch (e) { bad(); }
+}
+
+/* ---------- where are we? (rough guess from the internet connection) ---------- */
+function miles(lat1, lon1, lat2, lon2) {
+  var R = Math.PI / 180;
+  var a = Math.sin((lat2 - lat1) * R / 2), b = Math.sin((lon2 - lon1) * R / 2);
+  var h = a * a + Math.cos(lat1 * R) * Math.cos(lat2 * R) * b * b;
+  return 7918 * Math.asin(Math.sqrt(h));
+}
+function locate(cb) {
+  function home() { cb(HOME_LAT, HOME_LON, HOME_NAME); }
+  function use(d) {
+    var la = parseFloat(d.latitude), lo = parseFloat(d.longitude);
+    if (!d.city || miles(la, lo, HOME_LAT, HOME_LON) < HOME_RADIUS_MILES) { home(); }
+    else { cb(la, lo, String(d.city)); }
+  }
+  get("https://get.geojs.io/v1/ip/geo.json", isPlace, use, function () {
+    get("https://ipwho.is/", isPlace, use, home);
+  });
 }
 
 function again(minutes) { setTimeout(load, minutes * 60000); }
 
 function load() {
-  function ok(d) { lastData = d; show(d); again(REFRESH_MINUTES); }
   function failed() {
     if (lastData) {
       setText("foot", "No internet. Showing weather from " + clock(lastData.current.time));
@@ -293,8 +317,12 @@ function load() {
     }
     again(5);
   }
-  if (/demo/.test(window.location.search)) { ok(DEMO); return; }
-  get("https://" + QUERY, ok, function () { get("http://" + QUERY, ok, failed); });
+  if (/demo/.test(window.location.search)) { lastData = DEMO; show(DEMO); return; }
+  locate(function (lat, lon, name) {
+    var q = weatherUrl(lat, lon);
+    function ok(d) { PLACE = name; lastData = d; show(d); again(REFRESH_MINUTES); }
+    get("https://" + q, isWeather, ok, function () { get("http://" + q, isWeather, ok, failed); });
+  });
 }
 
 var DEMO = {
