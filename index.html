@@ -97,12 +97,34 @@ function setText(id, s) {
   e.appendChild(document.createTextNode(s));
 }
 
+/* The Kindle browser reports a smaller screen than it really draws on.
+   Work out how much bigger the real screen is (add ?zoom=1.4 to the address to set it by hand). */
+var dbg = "";
+function zoomFactor(w) {
+  var m = /[?&]zoom=([0-9.]+)/.exec(window.location.search), d, s;
+  if (m) { return parseFloat(m[1]) || 1; }
+  if (!/Kindle/i.test(navigator.userAgent)) { return 1; }
+  d = window.devicePixelRatio || 1;
+  if (d > 1.1 && d < 3) { return d; }
+  s = (window.screen && screen.width) ? screen.width / w : 1;
+  if (s > 1.1 && s < 3) { return s; }
+  return 1;
+}
 function layout() {
   var w = document.body.offsetWidth || document.documentElement.clientWidth || window.innerWidth || 600;
   var h = window.innerHeight || document.documentElement.clientHeight || 800;
-  unit = Math.min(w / 100, h / 132);
+  var k = zoomFactor(w);
+  unit = Math.min(w * k / 100, h * k / 132);
   if (unit < 3) { unit = 3; }
   el("wrap").style.fontSize = unit + "px";
+  el("wrap").style.marginLeft = Math.max(0, (w * k - 100 * unit) / 2) + "px";
+  if (/debug/.test(window.location.search)) {
+    el("foot").style.fontSize = "4em";
+    dbg = " | b" + w + " i" + window.innerWidth + "x" + window.innerHeight +
+      " s" + (window.screen ? screen.width + "x" + screen.height : "?") +
+      " r" + window.devicePixelRatio + " k" + (Math.round(k * 100) / 100) +
+      (/Kindle/i.test(navigator.userAgent) ? " K" : " -");
+  }
 }
 
 /* ---------- weather code -> picture and word ---------- */
@@ -252,7 +274,7 @@ function show(d) {
     el("t" + i).innerHTML = Math.round(day.temperature_2m_max[i]) + DEG +
       " <span>" + Math.round(day.temperature_2m_min[i]) + DEG + "</span>";
   }
-  setText("foot", "Updated " + clock(cur.time));
+  setText("foot", "Updated " + clock(cur.time) + dbg);
 }
 
 /* ---------- get the forecast (free Open-Meteo service, no account needed) ---------- */
